@@ -1,0 +1,318 @@
+---
+title: "Time_series analysis and forecasting"
+author: Bahman Rostami-Tabar
+execute:
+  echo: false
+  message: false
+  warning: false
+  cache: true
+format:
+  html:
+    number-sections: true
+  docx:
+    number-sections: true
+  pdf:
+    number-sections: true
+    keep-tex: true
+---
+
+
+```{r}
+#| label: setup
+#| include: false
+library(tidyverse)
+library(fpp3)
+library(lubridate)
+library(tsbox)
+library(dygraphs)
+```
+
+
+# Prepare data for analysis and forecasting
+
+## Read data
+
+```{r}
+#| label: arrival
+ae_arrivals <- ???("data/AE_arrivals_hourly.csv")
+```
+
+
+
+
+
+## Check duplications and fix it
+
+```{r}
+#| label: duplicate
+#2.1- 
+n_duplicated <- ae_arrivals |> ???() |> sum()#check duplicates
+
+# remove duplicates using dplyr::distinct()  and get a distinct tibble
+```
+
+## Create tsibble
+
+```{r}
+#| label: tsibble
+arrival_tsb <- ??? |> 
+  as_tsibble(index = ???, key= ???)
+arrival_tsb
+```
+
+You can also check for temporal gaps and if there is any, fix them.
+
+
+## Create daily hospital arrivals with keys
+
+```{r}
+#| label: ae_daily_key
+ae_arrival_daily <- arrival_tsb |> ???(gender, type_injury) |> 
+  ???(date=lubridate::as_date(hour)) |> 
+  summarise(arrival=sum(arrival), .groups = "drop")
+ae_arrival_daily
+```
+
+
+## Create total hourly arrivals
+
+```{r}
+#| label: hourly
+arrival_hourly <- arrival_tsb |> 
+  ???(hour) |> 
+  ???(arrival=sum(arrival), .groups = "drop")
+arrival_hourly
+```
+
+
+## Create total hourly arrivals and daily
+
+```{r}
+#| label: daily
+arrival_daily <- arrival_tsb |> 
+  index_by(date=lubridate::as_date(hour)) |> 
+  summarise(arrival=sum(arrival), .groups = "drop")
+arrival_daily
+```
+
+
+# Visualise
+
+## time plot
+
+You can create time plot using `autoplot()` function
+
+```{r}
+#| label: ts-plot-hourly
+
+arrival_hourly |> ???(???) # create a time plot of hourly data
+```
+
+write what do you observe:
+
+```{r}
+#| label: ts-plot-daily
+arrival_daily |> ???(???) # create a time plot of daily data
+```
+
+write what do you observe:
+
+```{r}
+#| label: hourly-arrival-dygraph
+tsbox::ts_xts(arrival_hourly) |> 
+  dygraph() |> 
+  dyRangeSelector(dateWindow = c("2010-01-01", "2010-01-02"))
+```
+
+
+write what do you observe:
+
+
+```{r}
+#| label: daily-arrival-dygraph
+tsbox::ts_xts(arrival_daily) |> 
+  dygraph() |> 
+  dyRangeSelector(dateWindow = c("2010-01-01", "2010-02-01"))
+```
+
+write what do you observe:
+
+## Seasonal plots
+
+use seasonal and subseries plots to check whether series contain seasonality. You can also try this with hourly series, you can change the "period= ..." argument to see different periods of seasonality.
+
+```{r}
+#| label: seasonal-plot-hourly
+arrival_hourly |> feasts::???(???, period = "day") #seasonal plot
+```
+
+```{r}
+#| label: seasonal-plot-daily
+arrival_daily |> feasts::???(???, period = "week") #seasonal plot
+```
+
+## subseries plots
+
+```{r}
+#| label: sub-series
+arrival_hourly |> feasts::???(arrival, period = "day")# subseries plot
+arrival_daily |> feasts::???(arrival,period = "week")# subseries plot
+```
+
+Is there any seasonality in the hourly and daily time series?
+
+## autocorrelation plot
+
+```{r}
+#| label: acf-calcul
+arrival_daily |>
+  feasts::gg_lag(arrival, lags = 1:14, geom = "point")# create lag plots for 14 lags, from 1 to 14
+
+arrival_daily |> ???(lag_max = 14) |> autoplot()# plot acf# compute autocorrelation function for 14 lags and plot then
+```
+
+# Specify and train models
+## Time series cross validation (rolling origins)
+
+This is also called rolling forecast or rolling origin:
+You can also reflect on the following questions:
+- Why do we use TSCV? you can read more here: https://otexts.com/fpp3/tscv.html
+- How do we do TSCV in R? Which steps to follow?
+      1. split data using `filter_index()`
+      2. create different time series (different origins)
+      3. model each time series, 
+      4. forecast for each series
+      5. evaluate the forecast accuracy
+
+let's see how we do it in R:
+
+## split data
+
+We initially split the data into test and train, the size of test set equals the forecast horizon, we use this for the purpose of visualisating the forecasts, not deciding which model is the best(more accurate)
+
+```{r}
+#| label: split
+#| include: false
+f_horizon <- 42# forecast horizon
+percentage_test <- 0.1 #10% of time series for test set
+
+test <- arrival_daily |> 
+  filter_index(as.character(max(arrival_daily$date)-round(percentage_test*length(unique(arrival_daily$date)))+1) ~ .)
+
+train <- arrival_daily |>
+  filter_index(. ~ as.character(max(arrival_daily$date)-(round(percentage_test*length(unique(arrival_daily$date))))))
+```
+
+## Use `stretch_tsibble()` to Create different timeseries (i.e different id)
+
+We apply time series cross validation on the train data. We first start with an initial training size (.init = ) and then increase the size of the previous time series by adding more new observation(.step=) to create a new time series, we continue creating these timeseries until the number of observation left at the end of timeseries equals to the forecast horizon, we stop there.
+
+```{r}
+#| label: rolling-origin-series
+train_tscv <- arrival_daily |> 
+  filter_index(. ~ as.character(max(arrival_daily$date)-(f_horizon))) |>
+  ???(??? = length(unique(train$date)), ??? = 7) # split data into different time series (i.e. origin or id) with increasing size
+train_tscv
+```
+
+## train models for each time series
+
+```{r}
+#| label: train-model
+ae_model_tscv <- ??? |>
+???(
+    mean = ???(arrival),#total average
+    naive = ???(arrival),#naive
+    snaive = ???(arrival),#seasonal naive
+    exponential_smoothing = ???(arrival),#exponential smoothing naive
+    arima = ???(arrival),#ARIMA,
+    ar = ???(arrival),#AR
+    regression = ???(arrival ~ trend() + season()),#regression
+  )
+ae_model_tscv
+```
+
+# Generate forecast
+
+## Forecast for each series
+
+Now, we want to produce forecast for 42 days that is applied to all time series created using TSCV:
+
+```{r}
+#| label: fcst-series
+ae_fcst_tscv <-  ??? |> 
+  ???(h=f_horizon)
+ae_fcst_tscv #observe ae_fcst_tscv
+```
+
+## Produce probabilistic forecast using bootstrapping
+
+Most time series models produce normally distributed forecasts — that is, we assume that the distribution of possible future values follows a normal distribution. 
+
+When a normal distribution for the residuals is an unreasonable assumption, one alternative is to use bootstrapping, which only assumes that the residuals are uncorrelated with constant variance. 
+
+
+You can use `forecast()` directly to generate futures:
+
+```{r}
+#| label: bootstrap-forecast
+
+fit <- arrival_daily |>
+  model(AR(arrival))
+
+arrival_fc <- fit |>
+  forecast(h = 42, bootstrap = TRUE, times = 5)
+```
+
+
+You can also use `generate()` function to generate futures using bootstrapping:
+
+
+```{r}
+#| label: bootstrap-generate
+
+sim <- fit |> generate(h = 42, times = 5, bootstrap = TRUE)
+sim
+```
+
+## Extract prediction intervals
+
+Use `hilo()` to extract prediction intervals for any coverage probability you are interested in. To be able to see values for lower bound and upper bound in separate columns, you need to unpack the prediction intervals using `unpack_hilo()`:
+
+```{r}
+#| label: prediction-interval-extract
+## getting prediction intervals
+arrival_fc |> hilo(level = 95) |> unpack_hilo(`95%`)
+```
+
+# Evaluate forecast accuracy
+
+You calculate the point forecast accuracy using `accuracy()` function. `accuracy()` needs both the forecast object(fable) and actual data.
+This will provide a summary of multiple accuracy measures. The result is summarised automatically across all series (.id) using a simple average.
+
+```{r}
+#| label: all-accuracy-measures
+#point_accuracy_measures, interval_accuracy_measures, o and distribution_accuracy_measures)
+fc_accuracy <- ??? |> 
+  accuracy(???,
+           measures = list(point_accuracy_measures,
+                           interval_accuracy_measures,
+                           distribution_accuracy_measures
+))
+
+fc_accuracy |> select(.model,MASE,RMSSE,winkler,CRPS)
+
+```
+
+
+# Forecast for the future using the best model
+
+Once you compare the forecast accuracy and find out which model produces the most accurate forecadt, you can apply it to thw whole data to forecast the future:
+
+```{r}
+#| label: forecast-future
+forecast_future <- arrival_daily |> model(regression = TSLM(arrival ~trend()+season())) |>  forecast(h=f_horizon)
+
+forecast_future |> autoplot(arrival_daily |> filter_index("2016" ~ .))
+```
+
